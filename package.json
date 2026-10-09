@@ -1,0 +1,26 @@
+{
+  "name": "peptlas-mcp",
+  "version": "1.0.0",
+  "description": "MCP server: is this peptide legal? The legal status of peptides and GLP-1 drugs in the US, UK, EU, Australia, Canada, Brazil and sport, with primary sources and dates.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Peptlas Research Team <research@peptlas.com> (https://peptlas.com)",
+  "homepage": "https://peptlas.com/mcp-server/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Peptlas/peptlas-mcp.git"
+  },
+  "mcpName": "com.peptlas/legal-status",
+  "keywords": ["mcp", "model-context-protocol", "mcp-server", "peptides", "fda", "regulatory", "glp-1", "bpc-157", "legal-status"],
+  "bin": {
+    "peptlas-mcp": "stdio.mjs"
+  },
+  "files": ["stdio.mjs", "src", "server.json"],
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "^4.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

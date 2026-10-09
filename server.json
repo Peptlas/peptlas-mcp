@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.peptlas/legal-status",
+  "title": "Peptlas: is this peptide legal?",
+  "description": "Legal status of peptides and GLP-1 drugs in the US, UK, EU, Australia, Canada, Brazil and sport.",
+  "version": "1.0.0",
+  "websiteUrl": "https://peptlas.com/mcp-server/",
+  "repository": {
+    "url": "https://github.com/Peptlas/peptlas-mcp",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://peptlas.com/brand/peptlas-mark-512.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://peptlas.com/mcp"
+    }
+  ]
+}
