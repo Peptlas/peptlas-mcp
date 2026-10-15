@@ -4,13 +4,14 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { checkLegalStatus, statusInPlace, listCompounds, recentChanges, ToolInputError } from './tools.mjs';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const DOCS_URL = 'https://peptlas.com/mcp-server/';
 
 const STATUSES = ['compounding_legal', 'under_review', 'in_limbo', 'restricted', 'unscheduled'];
 
 const INSTRUCTIONS = [
   'Peptlas tracks the legal status of peptides and GLP-1 drugs (BPC-157, TB-500, semaglutide, tirzepatide, retatrutide and more)',
+  'and of seller-named blends (KLOW, GLOW, the Wolverine stack), which take their strictest ingredient\'s status,',
   'with the FDA, TGA, MHRA, EMA, Health Canada, ANVISA and WADA. Every status is dated and linked to its primary source.',
   'Use check_legal_status for "is X legal (in Y)?", status_in_place for "what is legal in Y?", recent_changes for news,',
   'and list_compounds to see what is covered. Quote the status label and its date, link the page from the result,',
@@ -36,7 +37,7 @@ const compound = z
   .string()
   .min(1)
   .max(100)
-  .describe('A compound by name, brand, code or street name: "BPC-157", "Ozempic", "tirzepatide", "reta", "TB500".');
+  .describe('A compound by name, brand, code or street name ("BPC-157", "Ozempic", "reta", "TB500"), or a blend ("KLOW", "GLOW", "Wolverine stack").');
 const place = z
   .string()
   .min(1)
@@ -68,7 +69,7 @@ export function createServer(atlas) {
     {
       title: 'Is this peptide legal?',
       description:
-        'The legal status of one peptide or GLP-1 drug in the United States (FDA), Australia (TGA), the UK (MHRA), the EU (EMA), Canada (Health Canada), ' +
+        'The legal status of one peptide, GLP-1 drug or seller-named blend (KLOW, GLOW, the Wolverine stack) in the United States (FDA), Australia (TGA), the UK (MHRA), the EU (EMA), Canada (Health Canada), ' +
         'Brazil (ANVISA, where covered) and sport (WADA), or in the one place you name. Returns each status with a plain-language note; for the U.S. also ' +
         'the full answer (compounding rules, the latest FDA advisory vote, the next dated event), plus primary sources and the date it was last verified.',
       inputSchema: z.object({ compound, place: place.optional().describe(`${place.description} Omit it for every place.`) }),
@@ -98,7 +99,7 @@ export function createServer(atlas) {
     {
       title: 'List compounds',
       description:
-        `The ${atlas.compounds.length} compounds Peptlas tracks, with the names people search by (brands, codes, street names), each U.S. status and its page. ` +
+        `The ${atlas.compounds.length} compounds and ${(atlas.blends ?? []).length} blends Peptlas tracks, with the names people search by (brands, codes, street names), each U.S. status and its page. ` +
         'Use it to see what is covered.',
       inputSchema: z.object({ us_status: z.enum(STATUSES).optional().describe('Only compounds with this U.S. status.') }),
       annotations: readOnly,
@@ -112,7 +113,7 @@ export function createServer(atlas) {
       title: 'Recent changes',
       description:
         'Dated regulatory events from the Peptlas changelog, newest first: FDA advisory votes, list changes, comment deadlines, warning letters. ' +
-        'Optionally for one compound or since a date. Use it for "what changed" or "any news on BPC-157".',
+        'Optionally for one compound (or a blend, meaning all its ingredients) or since a date. Use it for "what changed" or "any news on BPC-157".',
       inputSchema: z.object({
         compound: compound.optional().describe('Only this compound. Omit it for every compound.'),
         since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Only events on or after this date (YYYY-MM-DD).'),

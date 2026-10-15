@@ -72,24 +72,43 @@ function distance(key, k) {
   return editDistance(key, k);
 }
 
-export function resolveCompound(atlas, input) {
+/** Lookup keys for a seller-named blend: "KLOW", "KLOW 80", "Wolverine stack". */
+const blendKeys = (b) => [b.slug, b.name, ...b.aliases].map(norm).filter(Boolean);
+
+/**
+ * A compound or a seller-named blend. Exact names win (a compound before a blend), then the
+ * closest spelling: an answer when one candidate is clearly closest ("semaglutid"), and
+ * suggestions when several are ("thymosin" is two compounds).
+ */
+export function resolveSubject(atlas, input) {
   const key = norm(input);
-  if (!key) throw new ToolInputError('Name a compound, for example "BPC-157", "Ozempic" or "reta".');
-  const exact = atlas.compounds.find((c) => keysOf(c).includes(key));
-  if (exact) return exact;
-  // Close spellings and partial names become an answer when one compound is clearly closest
-  // ("semaglutid"), and suggestions when several are ("thymosin" is two compounds).
-  const near = atlas.compounds
-    .map((c) => ({ c, d: Math.min(...keysOf(c).map((k) => distance(key, k))) }))
+  if (!key) throw new ToolInputError('Name a compound or blend, for example "BPC-157", "Ozempic", "reta" or "KLOW".');
+  const blends = atlas.blends ?? [];
+  const exactCompound = atlas.compounds.find((c) => keysOf(c).includes(key));
+  if (exactCompound) return { kind: 'compound', item: exactCompound };
+  const exactBlend = blends.find((b) => blendKeys(b).includes(key));
+  if (exactBlend) return { kind: 'blend', item: exactBlend };
+  const near = [
+    ...atlas.compounds.map((c) => ({ kind: 'compound', item: c, name: c.name, d: Math.min(...keysOf(c).map((k) => distance(key, k))) })),
+    ...blends.map((b) => ({ kind: 'blend', item: b, name: `${b.name} (blend)`, d: Math.min(...blendKeys(b).map((k) => distance(key, k))) })),
+  ]
     .filter((x) => x.d <= Math.max(1, Math.floor(key.length / 4)))
     .sort((a, b) => a.d - b.d);
-  if (near.length && near[0].d <= 1 && key.length >= 4 && (near.length === 1 || near[1].d > near[0].d)) return near[0].c;
-  const names = near.slice(0, 4).map((x) => x.c.name);
+  if (near.length && near[0].d <= 1 && key.length >= 4 && (near.length === 1 || near[1].d > near[0].d)) {
+    return { kind: near[0].kind, item: near[0].item };
+  }
+  const names = near.slice(0, 4).map((x) => x.name);
   throw new ToolInputError(
     names.length
       ? `"${String(input).trim()}" matches more than one compound or none exactly. Did you mean: ${names.join(', ')}?`
-      : `Peptlas doesn't track "${String(input).trim()}" yet. It tracks ${atlas.compounds.length} compounds; list_compounds names them all.`,
+      : `Peptlas doesn't track "${String(input).trim()}" yet. It tracks ${atlas.compounds.length} compounds and ${blends.length} blends; list_compounds names them all.`,
   );
+}
+
+export function resolveCompound(atlas, input) {
+  const s = resolveSubject(atlas, input);
+  if (s.kind === 'blend') throw new ToolInputError(`${s.item.name} is a blend; name one of its ingredients, or ask check_legal_status about the blend.`);
+  return s.item;
 }
 
 // The site's status meanings are written for the U.S. (FDA lists and committees). Elsewhere
@@ -136,8 +155,64 @@ function credit(atlas, page) {
   return `Source: Peptlas (${page ?? atlas.url}), ${atlas.license.name}. ${DISCLAIMER}`;
 }
 
+/**
+ * A blend, place by place: its strictest ingredient's status, as worked out for the blend
+ * pages (src/lib/blends.ts, exported in atlas.json), with what each deciding ingredient's
+ * entry says there.
+ */
+function blendStatus(atlas, b, place) {
+  const p = place ? resolvePlace(place) : null;
+  const bySlug = (slug) => atlas.compounds.find((c) => c.slug === slug);
+  const ingredients = b.ingredients.map(bySlug).filter(Boolean);
+  const rows = b.places.flatMap((pl) => {
+    const P = PLACES.find((x) => x.authority === pl.authority);
+    if (!P || (p && P.id !== p.id)) return [];
+    return [{
+      place: P.place,
+      regulator: P.regulator,
+      status: pl.status,
+      status_label: pl.label,
+      meaning: pl.status ? meaningOf(atlas, P.id, pl.status) : null,
+      set_by: pl.set_by.map((slug) => {
+        const c = bySlug(slug);
+        return { compound: c?.name ?? slug, note: c?.jurisdictions.find((j) => j.authority === pl.authority)?.note ?? null };
+      }),
+    }];
+  });
+  if (b.brazil && (!p || p.id === 'br')) {
+    rows.push({
+      place: 'Brazil',
+      regulator: 'ANVISA',
+      status: b.brazil.status_class,
+      status_label: 'Restricted',
+      meaning: meaningOf(atlas, 'br', b.brazil.status_class),
+      set_by: b.brazil.set_by.map((slug) => {
+        const c = bySlug(slug);
+        return { compound: c?.name ?? slug, note: c?.brazil?.status_pt ?? null, language: 'pt-BR' };
+      }),
+    });
+  }
+  if (p && rows.length === 0) {
+    throw new ToolInputError(`Peptlas has no ${p.place} data for ${b.name} yet.`);
+  }
+  return {
+    blend: b.name,
+    ingredients: ingredients.map((c) => ({ compound: c.name, us_status_label: c.us.label, page: c.url })),
+    page: b.url,
+    ...(p?.member_state ? { note_on_place: `${p.member_state} is covered by the EU-level status; enforcement is national.` } : {}),
+    rule: 'A blend is never more legal than its least legal ingredient: each place takes the strictest ingredient status. The name is a market label, so amounts vary by seller.',
+    statuses: rows,
+    regulator_actions: b.acts ?? [],
+    composition_sources: b.sources,
+    last_verified: ingredients.map((c) => c.last_verified).sort()[0] ?? null,
+    credit: credit(atlas, b.url),
+  };
+}
+
 export function checkLegalStatus(atlas, { compound, place }) {
-  const c = resolveCompound(atlas, compound);
+  const subject = resolveSubject(atlas, compound);
+  if (subject.kind === 'blend') return blendStatus(atlas, subject.item, place);
+  const c = subject.item;
   const p = place ? resolvePlace(place) : null;
   const all = rowsFor(atlas, c);
   const rows = p ? all.filter((r) => r.place === p.place) : all;
@@ -207,14 +282,23 @@ export function listCompounds(atlas, { us_status } = {}) {
       in_brazil_data: Boolean(c.brazil),
       page: c.url,
     }));
-  return { count: list.length, compounds: list, places_tracked: PLACES.map((p) => p.place), last_checked: atlas.last_checked, credit: credit(atlas) };
+  const blends = (atlas.blends ?? []).map((b) => ({
+    blend: b.name,
+    also_known_as: b.aliases,
+    ingredients: b.ingredients.map((slug) => atlas.compounds.find((c) => c.slug === slug)?.name ?? slug),
+    us_status_label: b.places.find((pl) => pl.authority === 'United States (FDA)')?.label ?? null,
+    page: b.url,
+  }));
+  return { count: list.length, compounds: list, blends, places_tracked: PLACES.map((p) => p.place), last_checked: atlas.last_checked, credit: credit(atlas) };
 }
 
 export function recentChanges(atlas, { compound, since, limit = 10 } = {}) {
-  const c = compound ? resolveCompound(atlas, compound) : null;
+  // A blend has no changelog of its own: its news is its ingredients' news.
+  const subject = compound ? resolveSubject(atlas, compound) : null;
+  const slugs = subject ? (subject.kind === 'blend' ? subject.item.ingredients : [subject.item.slug]) : null;
   if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new ToolInputError('since must be a date like 2026-07-01.');
   const changes = atlas.changes
-    .filter((x) => (!c || x.slug === c.slug) && (!since || x.date >= since))
+    .filter((x) => (!slugs || slugs.includes(x.slug)) && (!since || x.date >= since))
     .slice(0, Math.min(Math.max(1, limit), 50))
     .map((x) => ({
       date: x.date,
